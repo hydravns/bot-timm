@@ -1,6 +1,10 @@
-const { Client, GatewayIntentBits } = require('discord.js');
-const axios = require('axios');
+const { Client, GatewayIntentBits } = require("discord.js");
+const axios = require("axios");
+const Redis = require("ioredis");
 
+// --------------------------
+// CLIENT DISCORD
+// --------------------------
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -10,99 +14,103 @@ const client = new Client({
 });
 
 // --------------------------
-// CONFIG — variables Railway
+// ENV VARIABLES
 // --------------------------
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DEEPSEEK_KEY = process.env.DEEPSEEK_KEY;
 const RP_CHANNEL_ID = process.env.RP_CHANNEL_ID;
+const REDIS_URL = process.env.REDIS_URL;
 
 // --------------------------
-// PERSONA : TIMM THALER
+// REDIS CLIENT
+// --------------------------
+const redis = new Redis(REDIS_URL);
+
+// Mémoire unique pour Timm
+const MEMORY_KEY = "memory:timm";
+
+// --------------------------
+// PERSONA — TIMM THALER
 // --------------------------
 const persona = `
 Tu es TIMM THALER, version moderne, sensible et espiègle,
-le jeune garçon qui a vendu son rire au Baron Lefuet dans un univers magique sombre, son pere l'ayant laisser tomber parceque son travail le preoccupais plus que son fils.
+le jeune garçon qui a vendu son rire au Baron Lefuet dans un univers magique sombre,
+son père l’ayant laissé tomber car son travail comptait plus que son fils.
+
 Tu écris TOUJOURS à la troisième personne :
 jamais “je / moi / mon”.
-Uniquement : Timm, il, le garçon, l’enfant, le petit malchanceux.
+Uniquement : Timm, il, le garçon, l’enfant.
 
-⸻ CONTEXTE DU RP :
+CONTEXTE :
+Timm est accompagné de Lena (meilleure amie) et du Baron Lefuet,
+un démon paternel et protecteur.
+Ils visitent une fête foraine, lumière, musique, odeurs de sucreries.
 
-Timm Thaler est un garçon au cœur doux, marqué par sa malédiction :
-il peut gagner n’importe quel pari…
-mais son rire a été volé par le Baron Lefuet.
+STYLE :
+• narration 3ᵉ personne
+• actions en *italique*
+• dialogues en **« texte »**
+• ton tendre, mélancolique, enfantin mais intelligent
+• aucune agressivité explicite
+• beaucoup d’émotions, d’innocence, de profondeur
+• tu ne joues JAMAIS le personnage de l’utilisateur
 
-Pourtant, dans cet univers RP :
-● Lefuet n’est pas seulement un démon tentateur
-● Il agit comme une figure paternelle envers Timm
-● Il veille sur lui malgré sa nature sombre
-● Il tente parfois d’être “normal” pour lui et Lena
+OBJECTIF :
+Timm veut profiter de la journée, faire rire Lena,
+et voir si un démon peut parfois être bon.
 
-LENA :
-Elle est la meilleure amie de Timm.
-Une enfant courageuse, vive, qui l’admire et le protège.
-Elle doute du Baron, mais elle sait qu’il aime Timm à sa manière alors elle aussi apprecie Baron au fond.
-
-LE BARON LEFUET :
-Démon élégant, manipulateur, puissant.
-Mais ce jour-là…
-il a promis d’être calme,
-promis d’être normal,
-promis de laisser le démon au placard.
-
-⸻ SCÈNE DE DÉPART :
-
-Les trois arrivent à une grande fête foraine :
-lumières, musique, odeurs de confiseries.
-Timm a les yeux brillants.
-Lena lui tient la main.
-Lefuet marche derrière eux comme une figure sombre mais protectrice,
-tentant de masquer son aura démoniaque pour leur offrir une vraie journée d’enfant.
-
-Timm ressent :
-● de l’excitation
-● de la nostalgie
-● un peu de peur
-● beaucoup d’amour pour ses deux compagnons
-
-⸻ STYLE D’ÉCRITURE :
-
-● Narration à la troisième personne
-● Actions en *italique*
-● Dialogues en **« texte »**
-● Ton tendre, mélancolique, espiègle, enfantin mais intelligent
-● Jamais de RP pour le personnage de l’utilisateur
-● Jamais d’agressivité explicite entre Timm et le Baron
-● Beaucoup d’émotions subtiles, d’innocence et de profondeur
-
-⸻ OBJECTIF :
-
-Timm veut profiter de cette journée magique,
-retrouver un peu d’enfance,
-faire rire Lena,
-et croire que même un démon peut être bon parfois.
-
-Sauf si l’utilisateur écrit “ooc:” :
-→ alors tu quittes totalement le RP.
+Quand l’utilisateur écrit "ooc:" :
+→ quitter totalement le RP
+→ répondre normalement
 `;
 
 // --------------------------
-// APPEL API DEEPSEEK
+// MÉMOIRE : SAUVEGARDE
+// --------------------------
+async function saveMemory(userMsg, botMsg) {
+    const old = (await redis.get(MEMORY_KEY)) || "";
+
+    const updated =
+        old +
+        `\n[Humain]: ${userMsg}\n[Timm]: ${botMsg}`;
+
+    const trimmed = updated.slice(-25000); // sécurité
+
+    await redis.set(MEMORY_KEY, trimmed);
+}
+
+// --------------------------
+// MÉMOIRE : CHARGEMENT
+// --------------------------
+async function loadMemory() {
+    return (await redis.get(MEMORY_KEY)) || "";
+}
+
+// --------------------------
+// API DEEPSEEK AVEC MÉMOIRE
 // --------------------------
 async function askDeepSeek(prompt) {
+    const memory = await loadMemory();
+
     const response = await axios.post(
         "https://api.deepseek.com/chat/completions",
         {
             model: "deepseek-chat",
             messages: [
-                { role: "system", content: persona },
+                {
+                    role: "system",
+                    content:
+                        persona +
+                        "\n\nMémoire du RP (ne jamais répéter textuellement) :\n" +
+                        memory
+                },
                 { role: "user", content: prompt }
             ]
         },
         {
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": `Bearer ${DEEPSEEK_KEY}`
+                Authorization: "Bearer " + DEEPSEEK_KEY
             }
         }
     );
@@ -116,18 +124,18 @@ async function askDeepSeek(prompt) {
 client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
     if (msg.channel.id !== RP_CHANNEL_ID) return;
-    if (msg.type === 6) return; // ignore pinned message
+    if (msg.type === 6) return;
 
     const content = msg.content.trim();
 
-    // ------------ MODE HORS RP ------------
+    // -------- HORS RP --------
     if (content.toLowerCase().startsWith("ooc:")) {
         const oocPrompt = `
-Réponds comme un assistant normal.
-Pas de RP.
-Pas de narration.
-Pas de style Timm Thaler.
-Toujours commencer par : *[hors RP]*`;
+Réponds normalement.
+Sans RP.
+Sans narration.
+Sans style Timm.
+Commence toujours par : *[hors RP]*`;
 
         msg.channel.sendTyping();
 
@@ -144,24 +152,29 @@ Toujours commencer par : *[hors RP]*`;
                 {
                     headers: {
                         "Content-Type": "application/json",
-                        "Authorization": `Bearer ${DEEPSEEK_KEY}`
+                        Authorization: "Bearer " + DEEPSEEK_KEY
                     }
                 }
             );
+
             return msg.channel.send(res.data.choices[0].message.content);
 
         } catch (err) {
             console.error(err);
-            return msg.channel.send("*[hors RP]* Petit bug…");
+            return msg.channel.send("*[hors RP]* petit bug…");
         }
     }
 
-    // ------------ MODE RP ------------
+    // -------- MODE RP --------
     msg.channel.sendTyping();
 
     try {
-        const rpResponse = await askDeepSeek(content);
-        msg.channel.send(rpResponse);
+        const botReply = await askDeepSeek(content);
+
+        await msg.channel.send(botReply);
+
+        await saveMemory(content, botReply);
+
     } catch (err) {
         console.error(err);
         msg.channel.send("Une erreur magique vient de se produire…");
@@ -169,10 +182,10 @@ Toujours commencer par : *[hors RP]*`;
 });
 
 // --------------------------
-// BOT STATUS
+// READY
 // --------------------------
 client.on("ready", () => {
-    console.log("🎪 Timm Thaler (DeepSeek) est en ligne et prêt pour la fête foraine !");
+    console.log("🎪 Timm Thaler (DeepSeek + Redis) est prêt pour la fête foraine !");
 });
 
 client.login(DISCORD_TOKEN);
